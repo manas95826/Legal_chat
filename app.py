@@ -38,7 +38,7 @@ def main():
             llm = HuggingFaceHub(
                 repo_id="google/flan-t5-large",
                 model_kwargs={"temperature": 5, "max_length": 64},
-                huggingfacehub_api_token="YOUR_API_TOKEN"
+                huggingfacehub_api_token="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"
             )
 
             docs = knowledge_base.similarity_search(user_question)
