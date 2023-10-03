@@ -34,15 +34,14 @@ def main():
 
         user_question = st.text_input("Ask a Question about your PDF:")
         if user_question:
-            # Hardcode the Hugging Face Hub API token here (not recommended for security)
-            huggingfacehub_api_token = "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"
-
-            docs = knowledge_base.similarity_search(user_question)
+            # Pass the Hugging Face Hub API token as a named parameter
             llm = HuggingFaceHub(
                 repo_id="google/flan-t5-large",
                 model_kwargs={"temperature": 5, "max_length": 64},
-                huggingface_api_token=huggingfacehub_api_token
+                huggingfacehub_api_token="YOUR_API_TOKEN"
             )
+
+            docs = knowledge_base.similarity_search(user_question)
             chain = load_qa_chain(llm, chain_type="stuff")
             response = chain.run(input_documents=docs, question=user_question)
 
