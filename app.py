@@ -1,174 +1,54 @@
-import streamlit as st 
+from dotenv import load_dotenv
 import os
-import base64
-import time
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM 
-from transformers import pipeline
-import torch 
-import textwrap 
-from langchain.document_loaders import PyPDFLoader, DirectoryLoader, PDFMinerLoader 
-from langchain.text_splitter import RecursiveCharacterTextSplitter 
-from langchain.embeddings import SentenceTransformerEmbeddings 
-from langchain.vectorstores import Chroma 
-from langchain.llms import HuggingFacePipeline
-from langchain.chains import RetrievalQA 
-from constants import CHROMA_SETTINGS
-from streamlit_chat import message
+import streamlit as st
+from PyPDF2 import PdfReader
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.embeddings.huggingface import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS #facebook AI similarity search
+from langchain.chains.question_answering import load_qa_chain
+from langchain import HuggingFaceHub
 
-st.set_page_config(layout="wide")
-
-device = torch.device('cpu')
-
-checkpoint = "MBZUAI/LaMini-T5-738M"
-print(f"Checkpoint path: {checkpoint}")  # Add this line for debugging
-tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-base_model = AutoModelForSeq2SeqLM.from_pretrained(
-    checkpoint,
-    device_map=device,
-    torch_dtype=torch.float32
-)
-
-
-# checkpoint = "LaMini-T5-738M"
-# tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-# base_model = AutoModelForSeq2SeqLM.from_pretrained(
-#     checkpoint,
-#     device_map="auto",
-#     torch_dtype = torch.float32,
-#     from_tf=True
-# )
-
-persist_directory = "db"
-
-@st.cache_resource
-def data_ingestion():
-    for root, dirs, files in os.walk("docs"):
-        for file in files:
-            if file.endswith(".pdf"):
-                print(file)
-                loader = PDFMinerLoader(os.path.join(root, file))
-    documents = loader.load()
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=500)
-    texts = text_splitter.split_documents(documents)
-    #create embeddings here
-    embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
-    #create vector store here
-    db = Chroma.from_documents(texts, embeddings, persist_directory=persist_directory, client_settings=CHROMA_SETTINGS)
-    db.persist()
-    db=None 
-
-@st.cache_resource
-def llm_pipeline():
-    pipe = pipeline(
-        'text2text-generation',
-        model = base_model,
-        tokenizer = tokenizer,
-        max_length = 256,
-        do_sample = True,
-        temperature = 0.3,
-        top_p= 0.95,
-        device=device
-    )
-    local_llm = HuggingFacePipeline(pipeline=pipe)
-    return local_llm
-
-@st.cache_resource
-def qa_llm():
-    llm = llm_pipeline()
-    embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
-    db = Chroma(persist_directory="db", embedding_function = embeddings, client_settings=CHROMA_SETTINGS)
-    retriever = db.as_retriever()
-    qa = RetrievalQA.from_chain_type(
-        llm = llm,
-        chain_type = "stuff",
-        retriever = retriever,
-        return_source_documents=True
-    )
-    return qa
-
-def process_answer(instruction):
-    response = ''
-    instruction = instruction
-    qa = qa_llm()
-    generated_text = qa(instruction)
-    answer = generated_text['result']
-    return answer
-
-def get_file_size(file):
-    file.seek(0, os.SEEK_END)
-    file_size = file.tell()
-    file.seek(0)
-    return file_size
-
-# @st.cache_data
-#function to display the PDF of a given file 
-# def displayPDF(file):
-#     # Opening file from file path
-#     with open(file, "rb") as f:
-#         base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-
-#     # Embedding PDF in HTML
-#     pdf_display = F'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
-
-#     # Displaying File
-#     st.markdown(pdf_display, unsafe_allow_html=True)
-
-# Display conversation history using Streamlit messages
-def display_conversation(history):
-    for i in range(len(history["generated"])):
-        st.message(history["past"][i], is_user=True, key=str(i) + "_user")
-        st.message(history["generated"][i], key=str(i))
 
 def main():
-    st.markdown("<h1 style='text-align: center; color: blue;'>Chat with your PDF 🦜📄 </h1>", unsafe_allow_html=True)
-    st.markdown("<h3 style='text-align: center; color: grey;'>Built by <a href='https://github.com/manas95826'>The Manas with ❤️ </a></h3>", unsafe_allow_html=True)
+    load_dotenv()
+    st.set_page_config(page_title="Ask your PDF")
+    st.header("Ask Your PDF")
 
-    st.markdown("<h2 style='text-align: center; color:red;'>Upload your PDF 👇</h2>", unsafe_allow_html=True)
+    pdf = st.file_uploader("Upload your pdf",type="pdf")
 
-    uploaded_file = st.file_uploader("", type=["pdf"])
+    if pdf is not None:
+        pdf_reader = PdfReader(pdf)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text()
 
-    if uploaded_file is not None:
-        file_details = {
-            "Filename": uploaded_file.name,
-            "File size": get_file_size(uploaded_file)
-        }
-        filepath = "docs/"+uploaded_file.name
-        with open(filepath, "wb") as temp_file:
-                temp_file.write(uploaded_file.read())
+        # spilit ito chuncks
+        text_splitter = CharacterTextSplitter(
+            separator="\n",
+            chunk_size=1000,
+            chunk_overlap=200,
+            length_function=len
+        )
+        chunks = text_splitter.split_text(text)
 
-        col1, col2= st.columns([1,2])
-        with col1:
-            st.markdown("<h4 style color:black;'>File details</h4>", unsafe_allow_html=True)
-            st.json(file_details)
-            # st.markdown("<h4 style color:black;'>File preview</h4>", unsafe_allow_html=True)
-            # pdf_view = displayPDF(filepath)
+        # create embedding
+        embeddings = HuggingFaceEmbeddings()
 
-        with col2:
-            with st.spinner('Embeddings are in process...'):
-                ingested_data = data_ingestion()
-            st.success('Embeddings are created successfully!')
-            st.markdown("<h4 style color:black;'>Chat Here</h4>", unsafe_allow_html=True)
+        knowledge_base = FAISS.from_texts(chunks,embeddings)
+
+        user_question = st.text_input("Ask Question about your PDF:")
+        if user_question:
+            docs = knowledge_base.similarity_search(user_question)
+            llm = HuggingFaceHub(repo_id="google/flan-t5-large", model_kwargs={"temperature":5,
+                                                      "max_length":64})
+            chain = load_qa_chain(llm,chain_type="stuff")
+            response = chain.run(input_documents=docs,question=user_question)
+
+            st.write(response)
 
 
-            user_input = st.text_input("", key="input")
 
-            # Initialize session state for generated responses and past messages
-            if "generated" not in st.session_state:
-                st.session_state["generated"] = ["I am ready to help you"]
-            if "past" not in st.session_state:
-                st.session_state["past"] = ["Hey there!"]
-                
-            # Search the database for a response based on user input and update session state
-            if user_input:
-                answer = process_answer({'query': user_input})
-                st.session_state["past"].append(user_input)
-                response = answer
-                st.session_state["generated"].append(response)
+        # st.write(chunks)
 
-            # Display conversation history using Streamlit messages
-            if st.session_state["generated"]:
-                display_conversation(st.session_state)
-      
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
-
