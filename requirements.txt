@@ -3,4 +3,4 @@ streamlit
 PyPDF2
 python-dotenv
 sentence-transformers
-faiss
+faiss-cpu
